@@ -2,7 +2,7 @@
 
 Production-ready FastAPI service wrapping YOLOv8 for object detection. Send an image, get JSON detections — works for any system that can `POST` a file (web apps, n8n flows, mobile, Postman, `curl`).
 
-![swagger](demo/swagger.png)
+![swagger](demo/swagger.jpg)
 
 > Swagger UI screenshot placeholder. After cloning, run the server and capture the `/docs` page.
 
