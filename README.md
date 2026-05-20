@@ -46,9 +46,28 @@ Then:
 curl -fsS http://127.0.0.1:8000/health
 # {"status":"ok","model":"yolov8n.pt","device":"cpu"}
 
+# Detect everything in an image
 curl -s -X POST http://127.0.0.1:8000/detect \
      -F "file=@samples/street.jpg" \
      | jq '.detections[] | {class_name, confidence}'
+
+# Only return people and cars, raise the threshold to 0.6
+curl -s -X POST "http://127.0.0.1:8000/detect?conf=0.6&classes=person,car" \
+     -F "file=@samples/street.jpg" \
+     | jq '.detections | length'
+
+# Equivalent using class ids instead of names (person=0, car=2)
+curl -s -X POST "http://127.0.0.1:8000/detect?classes=0,2" \
+     -F "file=@samples/street.jpg"
+
+# Detect from a public URL (no upload)
+curl -s -X POST "http://127.0.0.1:8000/detect/url?url=https://ultralytics.com/images/bus.jpg" \
+     | jq '{count: (.detections | length), latency_ms}'
+
+# With API key (when API_KEY is set in .env)
+curl -X POST http://127.0.0.1:8000/detect \
+     -H "X-API-Key: $API_KEY" \
+     -F "file=@samples/street.jpg"
 ```
 
 Or open http://127.0.0.1:8000/docs and use the Swagger UI directly.
