@@ -1,0 +1,21 @@
+# gitleaks v8 custom config — extends the default ruleset with project-specific
+# allowlists so documentation placeholders don't trigger false positives.
+#
+# Test locally:   gitleaks detect --source . --config .gitleaks.toml --verbose
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Documentation placeholders and example curls are not secrets"
+paths = [
+    '''\.env\.example$''',
+    '''README\.md$''',
+]
+
+[[allowlists]]
+description = "The API_KEY env var name itself shouldn't trigger generic-secret heuristics"
+regexes = [
+    '''X-API-Key:\s*\$API_KEY''',
+    '''API_KEY=somelongsecret''',
+]

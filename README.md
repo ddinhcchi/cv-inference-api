@@ -156,7 +156,7 @@ The container runs CPU inference (Docker Desktop on macOS cannot pass through Ap
 
 ```bash
 pytest tests/ -v
-# 7 passed in ~35s (model load dominates)
+# 11 passed in ~35s (model load dominates)
 ```
 
 ---
@@ -166,6 +166,26 @@ pytest tests/ -v
 - **Large images are downscaled** before inference (configurable via `MAX_IMAGE_SIDE`). Bounding boxes are scaled back to original-image coordinates in the response so clients never have to.
 - **Singleton model** loaded inside FastAPI's `lifespan` context — no per-request reload, no cold starts after warm-up.
 - **Failure modes are explicit**: 415 for non-image upload, 422 for empty / bad params, 502 for failed URL fetch, 401 for bad API key.
+
+---
+
+## Security — secret scanning
+
+The repo wires up [`gitleaks`](https://github.com/gitleaks/gitleaks) via [`pre-commit`](https://pre-commit.com) so it's impossible to accidentally commit an `API_KEY` value or any other credential. The hook runs locally on every `git commit` and blocks the commit if anything matches.
+
+```bash
+brew install gitleaks pre-commit   # macOS — Linux users: pipx install both
+pre-commit install                  # installs the .git/hooks/pre-commit shim
+pre-commit run --all-files          # scan everything already in the index
+gitleaks detect --source . --verbose # scan the full git history
+```
+
+[`.gitleaks.toml`](.gitleaks.toml) extends the default ruleset with two allowlists:
+
+- `.env.example` and `README.md` — they intentionally contain placeholder credentials
+- The literal `X-API-Key: $API_KEY` curl example and `API_KEY=somelongsecret` doc snippet — these are documentation patterns, not real secrets
+
+For deployments, also enable [GitHub Push Protection](https://docs.github.com/en/code-security/secret-scanning/push-protection-for-repositories-and-organizations) as a second line of defence — it scans on the server side, so even a developer who skipped `pre-commit install` can't leak credentials.
 
 ---
 

@@ -1,0 +1,14 @@
+# Run automatically before every `git commit`. To activate locally once:
+#   pip install pre-commit
+#   pre-commit install
+#
+# To scan the full repo history (catches secrets in older commits):
+#   pre-commit run --all-files
+#   gitleaks detect --source . --verbose
+repos:
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.18.4
+    hooks:
+      - id: gitleaks
+        name: gitleaks (secret scanner)
+        description: "Block commits that contain API keys, tokens or credentials."
