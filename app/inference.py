@@ -8,6 +8,31 @@ from ultralytics import YOLO
 from .schemas import BBox, Detection, ImageMeta
 
 
+def _scale_detections(boxes, class_names: dict[int, str], meta: ImageMeta) -> list[Detection]:
+    out: list[Detection] = []
+    if boxes is None or boxes.cls is None:
+        return out
+    scale_x = meta.width / meta.resized_width
+    scale_y = meta.height / meta.resized_height
+    for cls_t, conf_t, xyxy_t in zip(boxes.cls, boxes.conf, boxes.xyxy):
+        cid = int(cls_t.item())
+        x1, y1, x2, y2 = xyxy_t.tolist()
+        out.append(
+            Detection(
+                class_id=cid,
+                class_name=class_names.get(cid, str(cid)),
+                confidence=float(conf_t.item()),
+                bbox=BBox(
+                    x1=int(x1 * scale_x),
+                    y1=int(y1 * scale_y),
+                    x2=int(x2 * scale_x),
+                    y2=int(y2 * scale_y),
+                ),
+            )
+        )
+    return out
+
+
 def _resolve_device(preferred: str) -> str:
     if preferred == "mps" and torch.backends.mps.is_available():
         return "mps"
@@ -56,30 +81,37 @@ class ModelService:
             verbose=False,
         )
         latency_ms = (time.perf_counter() - t0) * 1000.0
-
-        out: list[Detection] = []
         if not results:
-            return out, meta, latency_ms
-        boxes = results[0].boxes
-        if boxes is None or boxes.cls is None:
-            return out, meta, latency_ms
+            return [], meta, latency_ms
+        return _scale_detections(results[0].boxes, self.class_names, meta), meta, latency_ms
 
-        scale_x = meta.width / meta.resized_width
-        scale_y = meta.height / meta.resized_height
-        for cls_t, conf_t, xyxy_t in zip(boxes.cls, boxes.conf, boxes.xyxy):
-            cid = int(cls_t.item())
-            x1, y1, x2, y2 = xyxy_t.tolist()
-            out.append(
-                Detection(
-                    class_id=cid,
-                    class_name=self.class_names.get(cid, str(cid)),
-                    confidence=float(conf_t.item()),
-                    bbox=BBox(
-                        x1=int(x1 * scale_x),
-                        y1=int(y1 * scale_y),
-                        x2=int(x2 * scale_x),
-                        y2=int(y2 * scale_y),
-                    ),
-                )
-            )
-        return out, meta, latency_ms
+    def detect_batch(
+        self,
+        images_bgr: list[np.ndarray],
+        conf: float,
+        classes: list[int] | None = None,
+    ) -> tuple[list[list[Detection]], list[ImageMeta], float]:
+        """Single forward pass over the whole batch.
+
+        Ultralytics packs the list into one tensor internally, so latency
+        scales sub-linearly with batch size — usually 2-4 images cost about
+        the same as one on M4 MPS.
+        """
+        resized_and_meta = [self._resize_if_needed(img) for img in images_bgr]
+        resized = [pair[0] for pair in resized_and_meta]
+        metas = [pair[1] for pair in resized_and_meta]
+
+        t0 = time.perf_counter()
+        results = self.model.predict(
+            resized,
+            device=self.device,
+            conf=conf,
+            classes=classes,
+            verbose=False,
+        )
+        latency_ms = (time.perf_counter() - t0) * 1000.0
+
+        per_image: list[list[Detection]] = []
+        for meta, res in zip(metas, results):
+            per_image.append(_scale_detections(res.boxes, self.class_names, meta))
+        return per_image, metas, latency_ms

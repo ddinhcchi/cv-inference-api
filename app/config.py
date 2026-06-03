@@ -6,6 +6,7 @@ class Settings(BaseSettings):
     model_weights: str = "yolov8n.pt"
     default_conf: float = 0.4
     max_image_side: int = 1920
+    max_batch_size: int = 10
     api_key: str = ""
     allowed_origins: str = "*"
 

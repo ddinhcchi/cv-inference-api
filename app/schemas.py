@@ -31,6 +31,26 @@ class DetectionResponse(BaseModel):
     latency_ms: float
 
 
+class BatchItem(BaseModel):
+    filename: str
+    image: ImageMeta
+    detections: list[Detection]
+
+
+class BatchDetectionResponse(BaseModel):
+    request_id: str
+    model: str
+    device: str
+    batch_size: int
+    results: list[BatchItem]
+    inference_latency_ms: float = Field(
+        ..., description="Wall-clock for the batched forward pass (excludes I/O)."
+    )
+    total_latency_ms: float = Field(
+        ..., description="End-to-end wall-clock including decode + resize + inference."
+    )
+
+
 class ClassesResponse(BaseModel):
     model: str
     classes: dict[int, str]

@@ -151,6 +151,53 @@ def test_detect_url_returns_502_on_timeout(client):
     assert r.status_code == 502
 
 
+def test_batch_happy_path(client):
+    img_small = _fake_jpeg(width=320, height=240)
+    img_large = _fake_jpeg(width=800, height=600)
+    r = client.post(
+        "/detect/batch",
+        files=[
+            ("files", ("a.jpg", img_small, "image/jpeg")),
+            ("files", ("b.jpg", img_large, "image/jpeg")),
+        ],
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["batch_size"] == 2
+    assert len(body["results"]) == 2
+    assert body["results"][0]["filename"] == "a.jpg"
+    assert body["results"][1]["image"]["width"] == 800
+    # batched inference should be wall-clock faster than 2x single (rough sanity)
+    assert body["inference_latency_ms"] > 0
+
+
+def test_batch_rejects_oversize(client, monkeypatch):
+    from app import config as cfg
+
+    monkeypatch.setattr(cfg.settings, "max_batch_size", 1)
+    img = _fake_jpeg()
+    r = client.post(
+        "/detect/batch",
+        files=[
+            ("files", ("a.jpg", img, "image/jpeg")),
+            ("files", ("b.jpg", img, "image/jpeg")),
+        ],
+    )
+    assert r.status_code == 413
+
+
+def test_batch_rejects_empty_file_in_batch(client):
+    img = _fake_jpeg()
+    r = client.post(
+        "/detect/batch",
+        files=[
+            ("files", ("a.jpg", img, "image/jpeg")),
+            ("files", ("b.jpg", b"", "image/jpeg")),
+        ],
+    )
+    assert r.status_code == 422
+
+
 def test_detect_url_returns_415_when_body_is_not_an_image(client):
     """3xx redirects aren't followed by httpx default, so the body the client
     gets back is whatever the server sent — often HTML. Anything that isn't
