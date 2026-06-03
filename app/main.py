@@ -1,4 +1,6 @@
+import asyncio
 import io
+import time
 import uuid
 from contextlib import asynccontextmanager
 
@@ -12,7 +14,14 @@ from PIL import Image
 
 from .config import settings
 from .inference import ModelService
-from .schemas import ClassesResponse, DetectionResponse, ErrorResponse, HealthResponse
+from .schemas import (
+    BatchDetectionResponse,
+    BatchItem,
+    ClassesResponse,
+    DetectionResponse,
+    ErrorResponse,
+    HealthResponse,
+)
 
 _state: dict[str, ModelService] = {}
 
@@ -163,6 +172,63 @@ async def detect_url(
         image=meta,
         detections=detections,
         latency_ms=round(latency_ms, 2),
+    )
+
+
+@app.post(
+    "/detect/batch",
+    response_model=BatchDetectionResponse,
+    responses={
+        401: {"model": ErrorResponse},
+        413: {"model": ErrorResponse},
+        415: {"model": ErrorResponse},
+        422: {"model": ErrorResponse},
+    },
+    dependencies=[Depends(require_api_key)],
+)
+async def detect_batch(
+    files: list[UploadFile] = File(..., description="2–N images, multipart form"),
+    conf: float = Query(default=settings.default_conf, ge=0.0, le=1.0),
+    classes_filter: str | None = Query(default=None, alias="classes"),
+    model: ModelService = Depends(get_model),
+) -> BatchDetectionResponse:
+    if not files:
+        raise HTTPException(status_code=422, detail="batch is empty")
+    if len(files) > settings.max_batch_size:
+        raise HTTPException(
+            status_code=413,
+            detail=f"batch size {len(files)} exceeds MAX_BATCH_SIZE={settings.max_batch_size}",
+        )
+
+    cls_filter = _parse_classes(classes_filter, model)
+
+    # Decode in parallel — file.read() is I/O bound. Errors surface per-file
+    # before we waste a forward pass on the rest.
+    raws = await asyncio.gather(*(f.read() for f in files))
+    images: list[np.ndarray] = []
+    for f, raw in zip(files, raws):
+        if not raw:
+            raise HTTPException(
+                status_code=422, detail=f"empty upload: {f.filename or '(unnamed)'}"
+            )
+        images.append(_decode_image(raw))
+
+    t0 = time.perf_counter()
+    per_image, metas, infer_ms = model.detect_batch(images, conf=conf, classes=cls_filter)
+    total_ms = (time.perf_counter() - t0) * 1000.0
+
+    items = [
+        BatchItem(filename=f.filename or "(unnamed)", image=meta, detections=dets)
+        for f, meta, dets in zip(files, metas, per_image)
+    ]
+    return BatchDetectionResponse(
+        request_id=str(uuid.uuid4()),
+        model=model.weights,
+        device=model.device,
+        batch_size=len(files),
+        results=items,
+        inference_latency_ms=round(infer_ms, 2),
+        total_latency_ms=round(total_ms, 2),
     )
 
 
