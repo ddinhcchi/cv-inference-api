@@ -21,6 +21,7 @@ Most ML repos hand you a notebook and stop. A real client wants something they c
 | `GET` | `/health` | Liveness + active model + device |
 | `GET` | `/classes` | All COCO class ids → names |
 | `POST` | `/detect` | Multipart image upload → detections |
+| `POST` | `/detect/batch` | 2–N images in one request → per-image detections |
 | `POST` | `/detect/url?url=…` | Detect from a public image URL |
 | `GET` | `/docs` | Interactive Swagger UI |
 | `GET` | `/redoc` | ReDoc reference |
@@ -64,6 +65,13 @@ curl -s -X POST "http://127.0.0.1:8000/detect?classes=0,2" \
 curl -s -X POST "http://127.0.0.1:8000/detect/url?url=https://ultralytics.com/images/bus.jpg" \
      | jq '{count: (.detections | length), latency_ms}'
 
+# Batch: 5 images in one round-trip → per-image detection arrays
+curl -s -X POST http://127.0.0.1:8000/detect/batch \
+     -F "files=@a.jpg" -F "files=@b.jpg" -F "files=@c.jpg" \
+     -F "files=@d.jpg" -F "files=@e.jpg" \
+     | jq '{batch_size, inference_latency_ms, total_latency_ms,
+            per_image: [.results[] | {filename, count: (.detections | length)}]}'
+
 # With API key (when API_KEY is set in .env)
 curl -X POST http://127.0.0.1:8000/detect \
      -H "X-API-Key: $API_KEY" \
@@ -104,6 +112,15 @@ Real load test with `locust`, 4 concurrent users, 30 s, 640×640 JPEG payloads. 
 | CPU | 41 ms | 86 ms | 140 ms | ~10 req/s | 0 |
 
 Throughput is gated by the test's `wait_time` (0.1–0.5 s per user) — not by the API. Headroom on MPS is significantly higher; bump `--users` to find your saturation point on your hardware.
+
+### Batch vs sequential (5 × 640 JPEGs, M4 MPS, post-warmup)
+
+| Mode | Wall-clock | Inference only |
+|---|---:|---:|
+| 5 × sequential `POST /detect` | ~56 ms total (11.2 ms/img) | — |
+| 1 × `POST /detect/batch` of 5 | **~45 ms total (9 ms/img)** | 33 ms |
+
+Batching is ~1.24× faster on M4 — most of the win comes from amortising HTTP, decode and Pydantic serialisation across one request, not from raw inference parallelism. On true GPU servers (CUDA + larger batch) the speedup widens substantially. The *first* batched call pays an MPS kernel-compile cost (~1 s); subsequent calls run at the steady-state numbers above.
 
 ---
 
@@ -156,7 +173,7 @@ The container runs CPU inference (Docker Desktop on macOS cannot pass through Ap
 
 ```bash
 pytest tests/ -v
-# 11 passed in ~35s (model load dominates)
+# 14 passed in ~7s (model load dominates first run)
 ```
 
 ---
