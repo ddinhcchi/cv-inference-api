@@ -23,6 +23,7 @@ Most ML repos hand you a notebook and stop. A real client wants something they c
 | `POST` | `/detect` | Multipart image upload → detections |
 | `POST` | `/detect/batch` | 2–N images in one request → per-image detections |
 | `POST` | `/detect/url?url=…` | Detect from a public image URL |
+| `GET` | `/metrics` | Prometheus text format — counters, latency histogram, model info |
 | `GET` | `/docs` | Interactive Swagger UI |
 | `GET` | `/redoc` | ReDoc reference |
 
@@ -173,8 +174,43 @@ The container runs CPU inference (Docker Desktop on macOS cannot pass through Ap
 
 ```bash
 pytest tests/ -v
-# 14 passed in ~7s (model load dominates first run)
+# 16 passed in ~7s (model load dominates first run)
 ```
+
+---
+
+## Observability — Prometheus `/metrics`
+
+The service exposes four metric families on `/metrics` in standard Prometheus text format. Point your scraper at the endpoint and you get request volume, latency, per-class detection counts and a model-info label out of the box.
+
+| Metric | Type | Labels |
+|---|---|---|
+| `cv_inference_requests_total` | counter | `endpoint`, `method`, `status` (status class `2xx`/`4xx`/`5xx`) |
+| `cv_inference_latency_seconds` | histogram | `endpoint` — buckets: 10ms, 25ms, 50ms, 100ms, 250ms, 500ms, 1s, 2s, 5s |
+| `cv_inference_detections_total` | counter | `class_name` — increments by 1 per bbox returned |
+| `cv_inference_model_info` | gauge | `model`, `device` — always 1, labels carry the info |
+
+Sample scrape excerpt after a few real requests:
+
+```
+cv_inference_requests_total{endpoint="/detect",method="POST",status="2xx"} 12
+cv_inference_latency_seconds_bucket{endpoint="/detect",le="0.05"} 9
+cv_inference_latency_seconds_bucket{endpoint="/detect",le="0.1"} 12
+cv_inference_detections_total{class_name="person"} 17
+cv_inference_detections_total{class_name="car"} 4
+cv_inference_model_info{model="yolov8n.pt",device="mps"} 1.0
+```
+
+Drop this Prometheus scrape job in and you've got SLO dashboards in 5 minutes:
+
+```yaml
+- job_name: cv-inference-api
+  metrics_path: /metrics
+  static_configs:
+    - targets: ['cv-api.internal:8000']
+```
+
+Status-class labels keep cardinality bounded (3 instead of every distinct HTTP code) — Prometheus best-practice.
 
 ---
 
