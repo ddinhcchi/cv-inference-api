@@ -14,6 +14,12 @@ from PIL import Image
 
 from .config import settings
 from .inference import ModelService
+from .metrics import (
+    metrics_response,
+    prometheus_middleware,
+    record_detections,
+    set_model_info,
+)
 from .schemas import (
     BatchDetectionResponse,
     BatchItem,
@@ -28,11 +34,13 @@ _state: dict[str, ModelService] = {}
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    _state["model"] = ModelService(
+    model = ModelService(
         weights=settings.model_weights,
         device=settings.device,
         max_image_side=settings.max_image_side,
     )
+    _state["model"] = model
+    set_model_info(model.weights, model.device)
     yield
     _state.clear()
 
@@ -53,6 +61,12 @@ app.add_middleware(
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
+app.middleware("http")(prometheus_middleware)
+
+
+@app.get("/metrics", include_in_schema=False)
+def metrics():
+    return metrics_response()
 
 
 def get_model() -> ModelService:
@@ -135,6 +149,7 @@ async def detect(
     image = _decode_image(raw)
     cls_filter = _parse_classes(classes_filter, model)
     detections, meta, latency_ms = model.detect(image, conf=conf, classes=cls_filter)
+    record_detections([d.class_name for d in detections])
     return DetectionResponse(
         request_id=str(uuid.uuid4()),
         model=model.weights,
@@ -165,6 +180,7 @@ async def detect_url(
     image = _decode_image(resp.content)
     cls_filter = _parse_classes(classes_filter, model)
     detections, meta, latency_ms = model.detect(image, conf=conf, classes=cls_filter)
+    record_detections([d.class_name for d in detections])
     return DetectionResponse(
         request_id=str(uuid.uuid4()),
         model=model.weights,
