@@ -151,6 +151,29 @@ def test_detect_url_returns_502_on_timeout(client):
     assert r.status_code == 502
 
 
+def test_metrics_endpoint_exposes_prometheus_text(client):
+    img = _fake_jpeg()
+    # generate at least one request so counters move off zero
+    client.post("/detect", files={"file": ("a.jpg", img, "image/jpeg")})
+    r = client.get("/metrics")
+    assert r.status_code == 200
+    body = r.text
+    assert "cv_inference_requests_total" in body
+    assert "cv_inference_latency_seconds" in body
+    assert "cv_inference_model_info" in body
+    # at least one /detect request counted
+    assert 'endpoint="/detect"' in body
+
+
+def test_metrics_records_detection_class_counter(client):
+    img = _fake_jpeg()
+    client.post("/detect", files={"file": ("a.jpg", img, "image/jpeg")})
+    body = client.get("/metrics").text
+    # the counter family must exist even when no detections fired on
+    # synthetic noise — it's only labelled when an actual class is detected.
+    assert "cv_inference_detections_total" in body
+
+
 def test_batch_happy_path(client):
     img_small = _fake_jpeg(width=320, height=240)
     img_large = _fake_jpeg(width=800, height=600)
